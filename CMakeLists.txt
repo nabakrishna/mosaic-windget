@@ -1,3 +1,4 @@
+#chnage the version of cmake to 3.20 to support the latest features and improvements
 cmake_minimum_required(VERSION 3.20)
 project(Mosaic LANGUAGES CXX)
 
@@ -9,10 +10,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Unicode Win32 API surface everywhere.
+# unicode Win32 API surface everywhere.
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
-# Warnings-as-guidance, not warnings-as-errors yet (Phase 1 is still stabilizing).
+# warnings-as-guidance, not warnings-as-errors yet (Phase 1 is still stabilizing).
 if(MSVC)
     add_compile_options(/W4 /permissive- /EHsc)
 endif()
