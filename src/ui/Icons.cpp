@@ -185,6 +185,24 @@ void DrawCheck(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush, D2D1_RECT_F
     ctx->DrawLine(p2, p3, brush, strokeWidth);
 }
 
+void DrawClose(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds, D2D1_COLOR_F color) {
+    Box b = FitSquare(bounds);
+    float s = b.half * 0.6f;
+    brush->SetColor(color);
+    float strokeWidth = b.half * 0.24f;
+    ctx->DrawLine({ b.cx - s, b.cy - s }, { b.cx + s, b.cy + s }, brush, strokeWidth);
+    ctx->DrawLine({ b.cx - s, b.cy + s }, { b.cx + s, b.cy - s }, brush, strokeWidth);
+}
+
+void DrawPlus(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds, D2D1_COLOR_F color) {
+    Box b = FitSquare(bounds);
+    float s = b.half * 0.65f;
+    brush->SetColor(color);
+    float strokeWidth = b.half * 0.22f;
+    ctx->DrawLine({ b.cx - s, b.cy }, { b.cx + s, b.cy }, brush, strokeWidth);
+    ctx->DrawLine({ b.cx, b.cy - s }, { b.cx, b.cy + s }, brush, strokeWidth);
+}
+
 void DrawChevronRight(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds, D2D1_COLOR_F color) {
     Box b = FitSquare(bounds);
     float s = b.half;
@@ -209,6 +227,8 @@ void Draw(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush,
     case IconKind::Pin:          DrawPin(ctx, brush, bounds, color); break;
     case IconKind::Lock:         DrawLock(ctx, brush, bounds, color); break;
     case IconKind::Check:        DrawCheck(ctx, brush, bounds, color); break;
+    case IconKind::Close:        DrawClose(ctx, brush, bounds, color); break;
+    case IconKind::Plus:         DrawPlus(ctx, brush, bounds, color); break;
     case IconKind::ChevronRight: DrawChevronRight(ctx, brush, bounds, color); break;
     case IconKind::None: default: break;
     }

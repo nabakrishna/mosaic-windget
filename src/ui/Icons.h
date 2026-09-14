@@ -16,6 +16,8 @@ enum class IconKind {
     Pin,           // pinned items
     Lock,          // quick notes lock affordance
     Check,         // completed to-do (drawn over the checkbox fill)
+    Close,         // per-row delete "x", shown on hover
+    Plus,          // add-task / add-item buttons
     ChevronRight,  // settings category rows (Phase 7)
 };
 
