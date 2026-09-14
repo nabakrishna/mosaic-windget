@@ -1,6 +1,5 @@
-#chnage the version of cmake to 3.20 to support the latest features and improvements
 cmake_minimum_required(VERSION 3.20)
-project(Mosaic LANGUAGES CXX)
+project(Mosaic LANGUAGES C CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "Mosaic is a native Windows application and must be built on Windows with the MSVC toolchain.")
@@ -10,14 +9,65 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# unicode Win32 API surface everywhere.
+# Unicode Win32 API surface everywhere.
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
-# warnings-as-guidance, not warnings-as-errors yet (Phase 1 is still stabilizing).
+# Warnings-as-guidance, not warnings-as-errors (this project is still under
+# active development phase by phase).
 if(MSVC)
     add_compile_options(/W4 /permissive- /EHsc)
 endif()
 
+# --- SQLite (vendored amalgamation) ---------------------------------------
+# Manual vendoring is preferred over always-download: it's deterministic,
+# works offline once set up, and doesn't depend on a URL I can't verify
+# from a non-Windows sandbox staying valid forever. See
+# third_party/sqlite/README.txt for how to place the two files. If they're
+# not there, we fall back to fetching them automatically so `cmake
+# --build` still works out of the box on a machine with internet access.
+set(MOSAIC_SQLITE_DIR "${CMAKE_SOURCE_DIR}/third_party/sqlite")
+
+if(EXISTS "${MOSAIC_SQLITE_DIR}/sqlite3.c" AND EXISTS "${MOSAIC_SQLITE_DIR}/sqlite3.h")
+    message(STATUS "Mosaic: using vendored SQLite amalgamation from ${MOSAIC_SQLITE_DIR}")
+    set(SQLITE_C_FILE "${MOSAIC_SQLITE_DIR}/sqlite3.c")
+    set(SQLITE_INCLUDE_DIR "${MOSAIC_SQLITE_DIR}")
+else()
+    message(STATUS "Mosaic: third_party/sqlite/sqlite3.{c,h} not found — attempting automatic download")
+    include(FetchContent)
+    FetchContent_Declare(
+        sqlite_amalgamation
+        URL https://www.sqlite.org/2024/sqlite-amalgamation-3450100.zip
+    )
+    FetchContent_MakeAvailable(sqlite_amalgamation)
+    set(SQLITE_C_FILE "${sqlite_amalgamation_SOURCE_DIR}/sqlite3.c")
+    set(SQLITE_INCLUDE_DIR "${sqlite_amalgamation_SOURCE_DIR}")
+
+    if(NOT EXISTS "${SQLITE_C_FILE}")
+        message(FATAL_ERROR
+            "Could not obtain SQLite automatically (no internet access, "
+            "blocked download, or the pinned sqlite.org URL has moved). "
+            "Please download the amalgamation manually from "
+            "https://www.sqlite.org/download.html and place sqlite3.c + "
+            "sqlite3.h into ${MOSAIC_SQLITE_DIR}/ (see "
+            "third_party/sqlite/README.txt), then re-run CMake configure.")
+    endif()
+endif()
+
+add_library(sqlite3 STATIC "${SQLITE_C_FILE}")
+target_include_directories(sqlite3 PUBLIC "${SQLITE_INCLUDE_DIR}")
+# SQLITE_DQS=0: disables treating double-quoted string literals as
+# identifiers-or-strings, a decades-old MySQL-compatibility footgun with no
+# reason to be on in a brand-new local app. SQLITE_THREADSAFE=1: Mosaic
+# only ever touches the database from the UI thread today, but the safer
+# default costs nothing measurable at this scale.
+target_compile_definitions(sqlite3 PUBLIC SQLITE_DQS=0 SQLITE_THREADSAFE=1)
+if(MSVC)
+    # The amalgamation is C, generated code, and not ours to hold to /W4 —
+    # silence its warnings specifically rather than the whole project's.
+    target_compile_options(sqlite3 PRIVATE /W0)
+endif()
+
+# --- Mosaic itself ---------------------------------------------------------
 add_executable(Mosaic WIN32
     src/main.cpp
     src/app/Application.cpp
@@ -28,13 +78,22 @@ add_executable(Mosaic WIN32
     src/ui/DashboardView.cpp
     src/ui/components/GlassPanel.cpp
     src/ui/components/WidgetCard.cpp
+    src/data/Database.cpp
+    src/data/TodoRepository.cpp
+    src/widgets/WidgetManager.cpp
+    src/widgets/TodoWidget.cpp
+    src/widgets/PhotoWidget.cpp
+    src/widgets/ActivityWidget.cpp
+    src/widgets/PinnedWidget.cpp
+    src/widgets/QuickNotesWidget.cpp
 )
 
 target_include_directories(Mosaic PRIVATE src)
 
-# Native Windows rendering/media/composition stack. No browser runtime, no
-# third-party UI framework — this is the whole dependency list for Phase 1.
+# Native Windows rendering/media/composition stack, plus SQLite for local
+# persistence. No browser runtime, no third-party UI framework.
 target_link_libraries(Mosaic PRIVATE
+    sqlite3
     d3d11.lib
     dxgi.lib
     d2d1.lib
@@ -45,6 +104,8 @@ target_link_libraries(Mosaic PRIVATE
     user32.lib
     gdi32.lib
     shcore.lib
+    shell32.lib
+    ole32.lib
 )
 
 set_target_properties(Mosaic PROPERTIES
