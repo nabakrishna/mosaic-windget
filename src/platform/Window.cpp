@@ -73,7 +73,7 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         // we redraw because something *could* have changed, not on a tight
         // render loop. No network, no polling of anything else here.
         if (wParam == 1) {
-            UpdateSampleData();
+            UpdateHeaderData();
             InvalidateRect(m_hwnd, nullptr, FALSE);
         }
         return 0;
@@ -88,6 +88,18 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_LBUTTONDOWN:
         OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        return 0;
+
+    case WM_LBUTTONDBLCLK:
+        OnLButtonDblClk(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        return 0;
+
+    case WM_CHAR:
+        OnChar(static_cast<wchar_t>(wParam));
+        return 0;
+
+    case WM_KEYDOWN:
+        OnKeyDown(static_cast<UINT>(wParam));
         return 0;
 
     case WM_ERASEBKGND:
@@ -125,7 +137,9 @@ void Window::EnableAcrylicBackdrop() {
 HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     WNDCLASSEX wc{};
     wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    // CS_DBLCLKS: without this, Windows never sends WM_LBUTTONDBLCLK — the
+    // To Do widget's "double-click a row to rename" relies on it.
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     wc.lpfnWndProc = WndProcThunk;
     wc.hInstance = hInstance;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
@@ -141,8 +155,8 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     // redirection surface, which would sit *behind* our DirectComposition
     // visual and defeat the whole point of presenting through DComp.
     // WS_POPUP (no title bar/border) matches the borderless widget look;
-    // window chrome (drag-to-move, resize handles) is added in Phase 2's
-    // design-system pass via custom hit-testing.
+    // window chrome (drag-to-move, resize handles) is added in a later
+    // pass via custom hit-testing.
     HWND hwnd = CreateWindowEx(
         WS_EX_NOREDIRECTIONBITMAP,
         kWindowClassName, L"Mosaic",
@@ -155,16 +169,30 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
 
     EnableAcrylicBackdrop();
 
+    // --- Data layer: open the database before anything tries to use it ---
+    // A failed Open() (permissions, disk full, corrupt file) must not crash
+    // the dashboard (spec section 60) — TodoRepository's methods already
+    // fail safe (return empty/0 on error) if m_database's handle is null,
+    // so we deliberately continue past a failed Open() rather than
+    // aborting Create() entirely. The user gets a dashboard with a To Do
+    // widget that just can't save anything this session, not a crash.
+    HRESULT dbHr = m_database.Open();
+    if (SUCCEEDED(dbHr)) {
+        m_todoRepository.SeedDefaultsIfEmpty();
+    }
+
+    m_widgetManager.Initialize();
+
     m_graphics = std::make_unique<ui::GraphicsDevice>();
     HRESULT hr = m_graphics->Initialize(m_hwnd, static_cast<UINT>(widthPx), static_cast<UINT>(heightPx));
     if (FAILED(hr)) return hr;
 
-    m_dashboardView = std::make_unique<ui::DashboardView>(m_graphics->DWriteFactory(), &m_theme);
+    m_dashboardView = std::make_unique<ui::DashboardView>(m_graphics->DWriteFactory(), &m_theme, &m_widgetManager);
     hr = m_dashboardView->CreateDeviceResources(m_graphics->DeviceContext());
     if (FAILED(hr)) return hr;
     m_deviceResourcesValid = true;
 
-    UpdateSampleData();
+    UpdateHeaderData();
     SetTimer(hwnd, /*id*/ 1, 60000, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
@@ -172,7 +200,7 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     return S_OK;
 }
 
-void Window::UpdateSampleData() {
+void Window::UpdateHeaderData() {
     SYSTEMTIME st;
     GetLocalTime(&st);
 
@@ -181,35 +209,20 @@ void Window::UpdateSampleData() {
         (st.wHour < 17)  ? L"Good Afternoon," :
         (st.wHour < 21)  ? L"Good Evening," :
                             L"Good Night,";
-    m_sampleData.greetingLine = greeting;
-    m_sampleData.userName = L"Naba"; // Phase 3 replaces this with the stored profile name
-    m_sampleData.motivation = L"Keep going, great things take time.";
+    m_headerData.greetingLine = greeting;
+    m_headerData.userName = L"Naba"; // becomes a stored profile setting in Phase 7
+    m_headerData.motivation = L"Keep going, great things take time.";
 
     static const wchar_t* kWeekday[] = { L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat" };
     static const wchar_t* kMonth[] = {
         L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun",
         L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec"
     };
-    m_sampleData.weekday = kWeekday[st.wDayOfWeek];
+    m_headerData.weekday = kWeekday[st.wDayOfWeek];
 
     std::wstringstream dateStream;
     dateStream << st.wDay << L" " << kMonth[st.wMonth - 1] << L" " << st.wYear;
-    m_sampleData.fullDate = dateStream.str();
-
-    // Placeholder content lifted straight from the reference design; real
-    // persistence arrives in Phase 3 (SQLite-backed TodoRepository etc.).
-    m_sampleData.todos = {
-        { L"Complete DSA revision", true },
-        { L"Finish Jarvis project", true },
-        { L"Read 20 pages of a book", false },
-        { L"Workout (30 mins)", false },
-        { L"Prepare for next week", false },
-        { L"Plan trip (Chennai to Pondicherry)", false },
-    };
-    m_sampleData.activityTitle = L"Gym Session";
-    m_sampleData.activityWhen = L"Tomorrow, 6:00 PM";
-    m_sampleData.activityNote = L"Small steps every day lead to big results.";
-    m_sampleData.pinnedItems = { L"Study Plan", L"Project Ideas" };
+    m_headerData.fullDate = dateStream.str();
 }
 
 void Window::OnPaint() {
@@ -227,7 +240,7 @@ void Window::OnPaint() {
     m_graphics->DeviceContext()->SetDpi(static_cast<float>(m_dpi), static_cast<float>(m_dpi));
     m_graphics->BeginDraw();
     m_graphics->DeviceContext()->Clear(D2D1::ColorF(0, 0, 0, 0)); // fully transparent; DWM backdrop shows through
-    m_dashboardView->Draw(m_graphics->DeviceContext(), bounds, m_sampleData);
+    m_dashboardView->Draw(m_graphics->DeviceContext(), bounds, m_headerData);
     HRESULT hr = m_graphics->EndDraw();
 
     if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
@@ -285,7 +298,7 @@ void Window::OnMouseMove(int pixelX, int pixelY) {
 
     if (!m_dashboardView) return;
     D2D1_POINT_2F dip = PixelToDip(pixelX, pixelY);
-    if (m_dashboardView->UpdateHover(dip)) {
+    if (m_dashboardView->OnMouseMove(dip)) {
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
 }
@@ -293,20 +306,50 @@ void Window::OnMouseMove(int pixelX, int pixelY) {
 void Window::OnMouseLeave() {
     m_trackingMouseLeave = false;
     if (!m_dashboardView) return;
-    // A point guaranteed to be outside every hoverable element's bounds.
-    if (m_dashboardView->UpdateHover({ -10000.0f, -10000.0f })) {
+    if (m_dashboardView->OnMouseLeave()) {
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
 }
 
 void Window::OnLButtonDown(int pixelX, int pixelY) {
     if (!m_dashboardView) return;
+    // Windows sends focus to whatever window was clicked, but WS_POPUP
+    // windows don't automatically take keyboard focus the way a normal
+    // top-level window does — without this, WM_CHAR/WM_KEYDOWN never
+    // arrive after clicking into the dashboard.
+    SetFocus(m_hwnd);
+
     D2D1_POINT_2F dip = PixelToDip(pixelX, pixelY);
-    m_dashboardView->UpdateHover(dip); // ensure hover state matches the click position
+    bool changed = m_dashboardView->OnLButtonDown(dip);
+
     if (m_dashboardView->IsPointerOverSettingsButton()) {
         // Phase 7 hooks the actual Settings panel here. For now this is a
         // deliberate no-op rather than a fabricated dialog — the button is
         // real and clickable, but there is nothing behind it yet.
+    }
+
+    if (changed) InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void Window::OnLButtonDblClk(int pixelX, int pixelY) {
+    if (!m_dashboardView) return;
+    D2D1_POINT_2F dip = PixelToDip(pixelX, pixelY);
+    if (m_dashboardView->OnDoubleClick(dip)) {
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
+void Window::OnChar(wchar_t ch) {
+    if (!m_dashboardView) return;
+    if (m_dashboardView->OnChar(ch)) {
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
+void Window::OnKeyDown(UINT virtualKey) {
+    if (!m_dashboardView) return;
+    if (m_dashboardView->OnKeyDown(virtualKey)) {
+        InvalidateRect(m_hwnd, nullptr, FALSE);
     }
 }
 
