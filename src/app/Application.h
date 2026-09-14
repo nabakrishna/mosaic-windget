@@ -5,10 +5,10 @@
 
 namespace mosaic::app {
 
-// Owns process-wide setup (COM, DPI awareness) and the main window.
-// Deliberately thin in Phase 1 — this is the seam where later phases plug
-// in the database, widget manager, tray icon, and settings service without
-// touching Window or main.cpp.
+// Owns process-wide setup (COM, DPI awareness) and the main window. The
+// database/widget-manager/repository layer lives inside Window as of
+// Phase 3 (see Window.h's comment on why) rather than here — Application
+// stays the thin process-lifetime shell it was always meant to be.
 class Application {
 public:
     int Run(HINSTANCE hInstance, int nCmdShow);
