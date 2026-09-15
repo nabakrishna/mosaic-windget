@@ -82,6 +82,8 @@ add_executable(Mosaic WIN32
     src/data/TodoRepository.cpp
     src/data/ActivityRepository.cpp
     src/data/PinnedRepository.cpp
+    src/media/LocalFolderPhotoProvider.cpp
+    src/media/ImagePipeline.cpp
     src/widgets/WidgetManager.cpp
     src/widgets/TodoWidget.cpp
     src/widgets/PhotoWidget.cpp
@@ -92,8 +94,19 @@ add_executable(Mosaic WIN32
     src/notifications/ToastNotifier.cpp
 )
 
-
 target_include_directories(Mosaic PRIVATE src)
+
+# Older Windows SDKs (pre-C++/WinRT 2.0) ship a version of the WinRT
+# headers whose <winrt/base.h> still pulls in <experimental/coroutine>,
+# which recent MSVC only compiles under the legacy /await flag. A current
+# SDK doesn't need this at all — see README's "Dependencies" section — but
+# scoping the flag to just this one WinRT-using file means the project
+# still builds correctly on an older SDK without forcing everyone to
+# update it first, and without affecting any other file's compile options.
+if(MSVC)
+    set_source_files_properties(src/notifications/ToastNotifier.cpp
+        PROPERTIES COMPILE_OPTIONS "/await")
+endif()
 
 # Native Windows rendering/media/composition stack, plus SQLite for local
 # persistence and the WinRT toast notification APIs. No browser runtime,
