@@ -80,18 +80,24 @@ add_executable(Mosaic WIN32
     src/ui/components/WidgetCard.cpp
     src/data/Database.cpp
     src/data/TodoRepository.cpp
+    src/data/ActivityRepository.cpp
+    src/data/PinnedRepository.cpp
     src/widgets/WidgetManager.cpp
     src/widgets/TodoWidget.cpp
     src/widgets/PhotoWidget.cpp
     src/widgets/ActivityWidget.cpp
+    src/widgets/ActivityDateTime.cpp
     src/widgets/PinnedWidget.cpp
     src/widgets/QuickNotesWidget.cpp
+    src/notifications/ToastNotifier.cpp
 )
+
 
 target_include_directories(Mosaic PRIVATE src)
 
 # Native Windows rendering/media/composition stack, plus SQLite for local
-# persistence. No browser runtime, no third-party UI framework.
+# persistence and the WinRT toast notification APIs. No browser runtime,
+# no third-party UI framework.
 target_link_libraries(Mosaic PRIVATE
     sqlite3
     d3d11.lib
@@ -106,6 +112,7 @@ target_link_libraries(Mosaic PRIVATE
     shcore.lib
     shell32.lib
     ole32.lib
+    runtimeobject.lib
 )
 
 set_target_properties(Mosaic PROPERTIES
