@@ -63,6 +63,22 @@ HRESULT Database::RunMigrations() {
         "  completed INTEGER NOT NULL DEFAULT 0,"
         "  sort_order INTEGER NOT NULL DEFAULT 0,"
         "  created_at INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS activities ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  title TEXT NOT NULL,"
+        "  due_at INTEGER NOT NULL,"
+        "  reminder_offset_seconds INTEGER NOT NULL DEFAULT 0,"
+        "  completed INTEGER NOT NULL DEFAULT 0,"
+        "  notified INTEGER NOT NULL DEFAULT 0,"
+        "  created_at INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS pinned_items ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  title TEXT NOT NULL,"
+        "  subtitle TEXT NOT NULL DEFAULT '',"
+        "  sort_order INTEGER NOT NULL DEFAULT 0,"
+        "  created_at INTEGER NOT NULL"
         ");";
 
     char* errMsg = nullptr;
