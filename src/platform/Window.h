@@ -7,6 +7,8 @@
 #include "ui/Theme.h"
 #include "data/Database.h"
 #include "data/TodoRepository.h"
+#include "data/ActivityRepository.h"
+#include "data/PinnedRepository.h"
 #include "widgets/WidgetManager.h"
 
 namespace mosaic::platform {
@@ -19,13 +21,19 @@ namespace mosaic::platform {
 //     solid translucent fill on older builds — see GraphicsDevice/Theme)
 //   - per-monitor-v2 DPI awareness so the dashboard is crisp at any scale
 //
-// As of Phase 3, Window also owns the local database, the TodoRepository,
-// and the WidgetManager — the actual data/widget layer, not just rendering
+// As of Phase 3, Window also owns the local database and the repository/
+// widget-manager layer — the actual data/widget layer, not just rendering
 // plumbing. This is still the right home for them: Window is the object
 // that's guaranteed to exist for the whole process lifetime and to be
-// destroyed in a well-defined order (repository/database outlive the
+// destroyed in a well-defined order (repositories/database outlive the
 // widgets that reference them, since they're declared first and C++
 // destroys members in reverse declaration order).
+//
+// As of Phase 4, Window's once-a-minute timer does double duty: it still
+// refreshes the header's greeting/date, and now also asks ActivityRepository
+// which reminders have come due and fires a real Windows toast for each —
+// see CheckActivityReminders(). A minute of latency on a reminder is an
+// acceptable trade for not running a second timer or any sub-minute polling.
 class Window {
 public:
     Window() = default;
@@ -62,6 +70,7 @@ private:
     void EnableAcrylicBackdrop();
 
     void UpdateHeaderData(); // refreshes greeting/date only — real widget data lives in the widgets themselves
+    void CheckActivityReminders(); // fires toasts for any activity whose reminder time has passed
 
     D2D1_POINT_2F PixelToDip(int pixelX, int pixelY) const;
 
@@ -72,12 +81,14 @@ private:
     ui::ThemeManager m_theme = ui::ThemeManager::CreateDark();
 
     // Declaration order matters here: members are destroyed in reverse
-    // order, so m_widgetManager (which holds a raw pointer into
-    // m_todoRepository, which holds one into m_database) must be declared
+    // order, so m_widgetManager (which holds raw pointers into the three
+    // repositories, which each hold one into m_database) must be declared
     // — and therefore destroyed — before them.
     data::Database m_database;
     data::TodoRepository m_todoRepository{ &m_database };
-    widgets::WidgetManager m_widgetManager{ &m_todoRepository };
+    data::ActivityRepository m_activityRepository{ &m_database };
+    data::PinnedRepository m_pinnedRepository{ &m_database };
+    widgets::WidgetManager m_widgetManager{ &m_todoRepository, &m_activityRepository, &m_pinnedRepository };
 
     std::unique_ptr<ui::GraphicsDevice> m_graphics;
     std::unique_ptr<ui::DashboardView>  m_dashboardView;

@@ -1,4 +1,6 @@
 #include "platform/Window.h"
+#include "notifications/ToastNotifier.h"
+#include "widgets/ActivityDateTime.h"
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <windowsx.h>
@@ -13,13 +15,13 @@
 // older Windows SDKs; the feature simply becomes a no-op there.
 #ifndef DWMWA_SYSTEMBACKDROP_TYPE
 #define DWMWA_SYSTEMBACKDROP_TYPE 38
-typedef enum {
-    DWMSBT_AUTO = 0,
-    DWMSBT_NONE = 1,
-    DWMSBT_MAINWINDOW = 2,     // Mica
-    DWMSBT_TRANSIENTWINDOW = 3, // Acrylic
-    DWMSBT_TABBEDWINDOW = 4,
-} DWM_SYSTEMBACKDROP_TYPE;
+// typedef enum {
+//     DWMSBT_AUTO = 0,
+//     DWMSBT_NONE = 1,
+//     DWMSBT_MAINWINDOW = 2,     // Mica
+//     DWMSBT_TRANSIENTWINDOW = 3, // Acrylic
+//     DWMSBT_TABBEDWINDOW = 4,
+// } DWM_SYSTEMBACKDROP_TYPE;
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -74,6 +76,7 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         // render loop. No network, no polling of anything else here.
         if (wParam == 1) {
             UpdateHeaderData();
+            CheckActivityReminders();
             InvalidateRect(m_hwnd, nullptr, FALSE);
         }
         return 0;
@@ -179,6 +182,8 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     HRESULT dbHr = m_database.Open();
     if (SUCCEEDED(dbHr)) {
         m_todoRepository.SeedDefaultsIfEmpty();
+        m_activityRepository.SeedDefaultIfEmpty();
+        m_pinnedRepository.SeedDefaultsIfEmpty();
     }
 
     m_widgetManager.Initialize();
@@ -193,6 +198,7 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     m_deviceResourcesValid = true;
 
     UpdateHeaderData();
+    CheckActivityReminders();
     SetTimer(hwnd, /*id*/ 1, 60000, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
@@ -223,6 +229,16 @@ void Window::UpdateHeaderData() {
     std::wstringstream dateStream;
     dateStream << st.wDay << L" " << kMonth[st.wMonth - 1] << L" " << st.wYear;
     m_headerData.fullDate = dateStream.str();
+}
+
+void Window::CheckActivityReminders() {
+    int64_t now = static_cast<int64_t>(std::time(nullptr));
+    auto due = m_activityRepository.GetDueForNotification(now);
+    for (const auto& activity : due) {
+        std::wstring when = widgets::activity_datetime::FormatForDisplay(activity.dueAt);
+        notifications::ToastNotifier::Show(activity.title, when);
+        m_activityRepository.MarkNotified(activity.id);
+    }
 }
 
 void Window::OnPaint() {
