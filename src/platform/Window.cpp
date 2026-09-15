@@ -1,6 +1,7 @@
 #include "platform/Window.h"
 #include "notifications/ToastNotifier.h"
 #include "widgets/ActivityDateTime.h"
+#include <shlobj.h>
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <windowsx.h>
@@ -70,15 +71,38 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_TIMER:
-        // Once a minute is plenty for a greeting/date string — this is the
-        // event-driven philosophy from spec section 36 applied literally:
-        // we redraw because something *could* have changed, not on a tight
-        // render loop. No network, no polling of anything else here.
+        // id 1: once a minute is plenty for a greeting/date string and an
+        // activity-reminder check — this is the event-driven philosophy
+        // from spec section 36 applied literally: we redraw because
+        // something *could* have changed, not on a tight render loop. It
+        // also doubles as the photo rotation clock (see
+        // kPhotoRotationMinutes) rather than running a third OS timer for
+        // something that's naturally expressible in whole minutes.
+        // id 2: the short-lived crossfade animation timer — see
+        // StartTransitionTimer's comment in Window.h.
         if (wParam == 1) {
             UpdateHeaderData();
             CheckActivityReminders();
+
+            if (++m_minutesSinceLastPhoto >= kPhotoRotationMinutes) {
+                m_minutesSinceLastPhoto = 0;
+                if (m_photoWidget && m_graphics) {
+                    m_photoWidget->RequestNextPhoto(m_graphics->DeviceContext());
+                }
+            }
             InvalidateRect(m_hwnd, nullptr, FALSE);
+        } else if (wParam == 2) {
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            if (!m_photoWidget || !m_photoWidget->IsTransitioning()) {
+                StopTransitionTimer();
+            }
         }
+        return 0;
+
+    case media::WM_MOSAIC_PHOTO_READY:
+        m_imagePipeline.PumpResult();
+        StartTransitionTimer(); // the just-delivered photo may have started a crossfade
+        InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
 
     case WM_MOUSEMOVE:
@@ -186,7 +210,20 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
         m_pinnedRepository.SeedDefaultsIfEmpty();
     }
 
+    // --- Photo source: default to the user's Pictures folder ------------
+    // Folder picking is a Settings feature (Phase 7); today this is the
+    // one sensible default that needs no configuration at all. A missing
+    // or empty Pictures folder isn't an error — PhotoWidget shows "No
+    // photos found" rather than anything crashing (spec section 60).
+    PWSTR picturesPath = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &picturesPath))) {
+        m_photoProvider.SetFolder(picturesPath);
+        CoTaskMemFree(picturesPath);
+    }
+    m_imagePipeline.Start(m_hwnd);
+
     m_widgetManager.Initialize();
+    m_photoWidget = static_cast<widgets::PhotoWidget*>(m_widgetManager.Get(widgets::WidgetId::Photo));
 
     m_graphics = std::make_unique<ui::GraphicsDevice>();
     HRESULT hr = m_graphics->Initialize(m_hwnd, static_cast<UINT>(widthPx), static_cast<UINT>(heightPx));
@@ -196,6 +233,10 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     hr = m_dashboardView->CreateDeviceResources(m_graphics->DeviceContext());
     if (FAILED(hr)) return hr;
     m_deviceResourcesValid = true;
+
+    if (m_photoWidget) {
+        m_photoWidget->RequestNextPhoto(m_graphics->DeviceContext());
+    }
 
     UpdateHeaderData();
     CheckActivityReminders();
@@ -241,6 +282,23 @@ void Window::CheckActivityReminders() {
     }
 }
 
+void Window::StartTransitionTimer() {
+    if (m_transitionTimerRunning) return;
+    if (!m_photoWidget || !m_photoWidget->IsTransitioning()) return;
+    // ~30fps is plenty smooth for a simple opacity crossfade and cheap
+    // enough to run for the fade's ~220ms without it reading as "the app
+    // just started animating things continuously" — it stops itself (see
+    // the WM_TIMER id==2 handler) the moment the fade reports done.
+    SetTimer(m_hwnd, /*id*/ 2, 33, nullptr);
+    m_transitionTimerRunning = true;
+}
+
+void Window::StopTransitionTimer() {
+    if (!m_transitionTimerRunning) return;
+    KillTimer(m_hwnd, /*id*/ 2);
+    m_transitionTimerRunning = false;
+}
+
 void Window::OnPaint() {
     if (!m_deviceResourcesValid) return;
 
@@ -266,12 +324,24 @@ void Window::OnPaint() {
         m_dashboardView->ReleaseDeviceResources();
         m_deviceResourcesValid = false;
 
+        // PhotoWidget's texture belongs to the device we're about to
+        // destroy — every other widget's OnDeviceLost is a no-op today,
+        // but calling it on all of them costs nothing and means a future
+        // widget with its own GPU resource doesn't need this call site
+        // updated to remember it exists.
+        for (const auto& [id, widget] : m_widgetManager.Widgets()) {
+            widget->OnDeviceLost();
+        }
+
         RECT client;
         GetClientRect(m_hwnd, &client);
         m_graphics = std::make_unique<ui::GraphicsDevice>();
         if (SUCCEEDED(m_graphics->Initialize(m_hwnd, client.right - client.left, client.bottom - client.top)) &&
             SUCCEEDED(m_dashboardView->CreateDeviceResources(m_graphics->DeviceContext()))) {
             m_deviceResourcesValid = true;
+            if (m_photoWidget) {
+                m_photoWidget->RequestNextPhoto(m_graphics->DeviceContext());
+            }
             InvalidateRect(m_hwnd, nullptr, FALSE);
         }
     }

@@ -9,7 +9,10 @@
 #include "data/TodoRepository.h"
 #include "data/ActivityRepository.h"
 #include "data/PinnedRepository.h"
+#include "media/LocalFolderPhotoProvider.h"
+#include "media/ImagePipeline.h"
 #include "widgets/WidgetManager.h"
+#include "widgets/PhotoWidget.h"
 
 namespace mosaic::platform {
 
@@ -25,15 +28,23 @@ namespace mosaic::platform {
 // widget-manager layer — the actual data/widget layer, not just rendering
 // plumbing. This is still the right home for them: Window is the object
 // that's guaranteed to exist for the whole process lifetime and to be
-// destroyed in a well-defined order (repositories/database outlive the
-// widgets that reference them, since they're declared first and C++
-// destroys members in reverse declaration order).
+// destroyed in a well-defined order (repositories/database/media layer
+// outlive the widgets that reference them, since they're declared first
+// and C++ destroys members in reverse declaration order).
 //
 // As of Phase 4, Window's once-a-minute timer does double duty: it still
 // refreshes the header's greeting/date, and now also asks ActivityRepository
 // which reminders have come due and fires a real Windows toast for each —
 // see CheckActivityReminders(). A minute of latency on a reminder is an
 // acceptable trade for not running a second timer or any sub-minute polling.
+//
+// As of Phase 5, there's a second, deliberately short-lived timer for the
+// photo crossfade: running a ~30fps timer permanently would violate the
+// near-0%-idle-CPU requirement, but the fade only needs to animate for
+// ~220ms every few minutes. StartTransitionTimer/StopTransitionTimer turn
+// it on only while PhotoWidget reports it's actually mid-fade, and it's
+// stopped again the moment that's no longer true — everything else stays
+// on the once-a-minute cadence.
 class Window {
 public:
     Window() = default;
@@ -72,23 +83,41 @@ private:
     void UpdateHeaderData(); // refreshes greeting/date only — real widget data lives in the widgets themselves
     void CheckActivityReminders(); // fires toasts for any activity whose reminder time has passed
 
+    void StartTransitionTimer();
+    void StopTransitionTimer();
+
     D2D1_POINT_2F PixelToDip(int pixelX, int pixelY) const;
 
     HWND m_hwnd = nullptr;
     UINT m_dpi = 96;
     bool m_trackingMouseLeave = false;
+    bool m_transitionTimerRunning = false;
+    int m_minutesSinceLastPhoto = 0;
+    static constexpr int kPhotoRotationMinutes = 5; // spec section 8's default; Settings (Phase 7) makes this configurable
 
     ui::ThemeManager m_theme = ui::ThemeManager::CreateDark();
 
     // Declaration order matters here: members are destroyed in reverse
-    // order, so m_widgetManager (which holds raw pointers into the three
-    // repositories, which each hold one into m_database) must be declared
-    // — and therefore destroyed — before them.
+    // order, so m_widgetManager (which holds raw pointers into everything
+    // below it) must be declared — and therefore destroyed — before them.
     data::Database m_database;
     data::TodoRepository m_todoRepository{ &m_database };
     data::ActivityRepository m_activityRepository{ &m_database };
     data::PinnedRepository m_pinnedRepository{ &m_database };
-    widgets::WidgetManager m_widgetManager{ &m_todoRepository, &m_activityRepository, &m_pinnedRepository };
+    media::LocalFolderPhotoProvider m_photoProvider;
+    media::ImagePipeline m_imagePipeline;
+    widgets::WidgetManager m_widgetManager{
+        &m_todoRepository, &m_activityRepository, &m_pinnedRepository,
+        &m_photoProvider, &m_imagePipeline
+    };
+
+    // Non-owning — WidgetManager owns the actual PhotoWidget instance.
+    // Photo is the one widget Window talks to directly (to drive rotation
+    // and the transition timer); every other widget is only ever reached
+    // generically through DashboardView/WidgetManager. A deliberate,
+    // documented special case rather than a generalized per-widget
+    // animation/scheduling system this single use doesn't justify yet.
+    widgets::PhotoWidget* m_photoWidget = nullptr;
 
     std::unique_ptr<ui::GraphicsDevice> m_graphics;
     std::unique_ptr<ui::DashboardView>  m_dashboardView;
