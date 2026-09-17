@@ -71,17 +71,24 @@ endif()
 add_executable(Mosaic WIN32
     src/main.cpp
     src/app/Application.cpp
+    src/app/AppSettings.cpp
     src/platform/Window.cpp
+    src/platform/TrayIcon.cpp
     src/ui/GraphicsDevice.cpp
     src/ui/Theme.cpp
     src/ui/Icons.cpp
     src/ui/DashboardView.cpp
+    src/ui/SettingsPanel.cpp
     src/ui/components/GlassPanel.cpp
     src/ui/components/WidgetCard.cpp
     src/data/Database.cpp
     src/data/TodoRepository.cpp
     src/data/ActivityRepository.cpp
     src/data/PinnedRepository.cpp
+    src/data/LayoutRepository.cpp
+    src/data/SettingsRepository.cpp
+    src/data/NotesRepository.cpp
+    src/layout/LayoutEngine.cpp
     src/media/LocalFolderPhotoProvider.cpp
     src/media/ImagePipeline.cpp
     src/widgets/WidgetManager.cpp
@@ -92,6 +99,8 @@ add_executable(Mosaic WIN32
     src/widgets/PinnedWidget.cpp
     src/widgets/QuickNotesWidget.cpp
     src/notifications/ToastNotifier.cpp
+    src/security/NoteCrypto.cpp
+    src/security/WindowsHello.cpp
 )
 
 target_include_directories(Mosaic PRIVATE src)
@@ -104,7 +113,9 @@ target_include_directories(Mosaic PRIVATE src)
 # still builds correctly on an older SDK without forcing everyone to
 # update it first, and without affecting any other file's compile options.
 if(MSVC)
-    set_source_files_properties(src/notifications/ToastNotifier.cpp
+    set_source_files_properties(
+        src/notifications/ToastNotifier.cpp
+        src/security/WindowsHello.cpp
         PROPERTIES COMPILE_OPTIONS "/await")
 endif()
 
@@ -126,6 +137,8 @@ target_link_libraries(Mosaic PRIVATE
     shell32.lib
     ole32.lib
     runtimeobject.lib
+    crypt32.lib
+    bcrypt.lib
 )
 
 set_target_properties(Mosaic PROPERTIES
