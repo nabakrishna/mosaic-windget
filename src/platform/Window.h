@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <functional>
 #include <memory>
+#include <vector>
 #include "ui/GraphicsDevice.h"
 #include "ui/DashboardView.h"
 #include "ui/Theme.h"
@@ -83,6 +84,9 @@ private:
     void OnLButtonDblClk(int pixelX, int pixelY);
     void OnChar(wchar_t ch);
     void OnKeyDown(UINT virtualKey);
+    // added the OnTrayCommand function to handle the tray icon commands
+    void PinToDesktopWorkerW();
+
 
     // Enables the Windows 11 system backdrop (acrylic-style blur of
     // whatever sits behind the window on the desktop). No-op with a

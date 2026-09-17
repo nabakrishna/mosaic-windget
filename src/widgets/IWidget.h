@@ -78,6 +78,15 @@ public:
 
     virtual void OnSettingsChanged() {}
     virtual void OnResize(const GridSize& /*newSize*/) {}
+
+    // Called after a D3D device-lost recovery, before the next Render.
+    // Every widget so far only ever draws through the shared brush/text
+    // formats DashboardView owns and recreates itself — except PhotoWidget
+    // (Phase 5), which owns its own ID2D1Bitmap texture tied to the old,
+    // now-destroyed device. Default no-op costs nothing for every other
+    // widget; PhotoWidget overrides it to drop its stale texture rather
+    // than risk drawing with a bitmap that belongs to a dead device.
+    virtual void OnDeviceLost() {}
 };
 
 } // namespace mosaic::widgets

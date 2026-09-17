@@ -38,7 +38,35 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"MosaicDashboardWindow";
 constexpr int kDefaultWidthDip = 940;
 constexpr int kDefaultHeightDip = 520;
+
+//-------------------------new for pin to desktop workerw---------------------------------------
+struct EnumWorkerWContext { HWND result = nullptr; };
+BOOL CALLBACK FindWorkerW(HWND hwnd, LPARAM lParam) {
+    HWND shellView = FindWindowExW(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
+    if (shellView) {
+        HWND* out = reinterpret_cast<HWND*>(lParam);
+        *out = FindWindowExW(nullptr, hwnd, L"WorkerW", nullptr);
+        return FALSE;
+    }
+    return TRUE;
+}
+//----------------------------------------------------------------------------------
 } // namespace
+
+//----------------------------------------- implemnt PinToDesktopWorkerW----------------------------
+void Window::PinToDesktopWorkerW() {
+    HWND progman = FindWindowW(L"Progman", nullptr);
+    if (!progman) return;
+    
+    SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
+    
+    HWND targetWorkerW = nullptr;
+    EnumWindows(FindWorkerW, reinterpret_cast<LPARAM>(&targetWorkerW));
+    
+    if (!targetWorkerW) return;
+    SetParent(m_hwnd, targetWorkerW);
+}
+//-----------------------------------------------------------------------------------
 
 Window::~Window() {
     if (m_dashboardView) m_dashboardView->ReleaseDeviceResources();
@@ -178,6 +206,11 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         return 1;
 
     case WM_DESTROY:
+        RECT rect;
+        if (GetWindowRect(m_hwnd, &rect)) {
+            m_settingsRepository.SetInt(L"WindowX", rect.left);
+            m_settingsRepository.SetInt(L"WindowY", rect.top);
+        }
         PostQuitMessage(0);
         return 0;
 
@@ -194,6 +227,23 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     // }
     //-----------------------------------------------------------------------------------------------------------------------------------
 
+    //------------------- new ----------------------------------------------------
+    case WM_WINDOWPOSCHANGING: {
+        auto* wp = reinterpret_cast<WINDOWPOS*>(lParam);
+        if (!(wp->flags & SWP_NOZORDER)) {
+            wp->hwndInsertAfter = HWND_BOTTOM;
+        }
+        return 0;
+    }
+    case WM_ACTIVATE:
+    case WM_ACTIVATEAPP:
+        if (wParam != WA_INACTIVE) {
+            SetWindowPos(m_hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        return 0;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    //-------------------------------------------------------------------------------
     default:
         return DefWindowProc(m_hwnd, msg, wParam, lParam);
     }
@@ -244,12 +294,43 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     // WS_POPUP (no title bar/border) matches the borderless widget look;
     // window chrome (drag-to-move, resize handles) is added in a later
     // pass via custom hit-testing.
+
+    //----------------------------------------------------
+    // HWND hwnd = CreateWindowEx(
+    //     WS_EX_NOREDIRECTIONBITMAP,
+    //     kWindowClassName, L"Mosaic",
+    //     WS_POPUP | WS_VISIBLE,
+    //     CW_USEDEFAULT, CW_USEDEFAULT, widthPx, heightPx,
+    //     nullptr, nullptr, hInstance, this);
+    //----------------------------------------------------------    
+    //new for the above block----------------------------------------------
+    // int startX = m_settingsRepository.GetInt(L"WindowX", CW_USEDEFAULT);
+    // int startY = m_settingsRepository.GetInt(L"WindowY", CW_USEDEFAULT);
+    // HWND hwnd = CreateWindowEx(
+    //     WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+    //     kWindowClassName, L"Mosaic",
+    //     WS_POPUP | WS_VISIBLE,
+    //     startX, startY, widthPx, heightPx,
+    //     nullptr, nullptr, hInstance, this);
+    // Default to coordinate (100, 100) if no saved position exists
+    // Temporarily hardcode this to flush out the bad database values
+    int startX = 100; // m_settingsRepository.GetInt(L"WindowX", 100);
+    int startY = 100; // m_settingsRepository.GetInt(L"WindowY", 100);
+
     HWND hwnd = CreateWindowEx(
-        WS_EX_NOREDIRECTIONBITMAP,
+        WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         kWindowClassName, L"Mosaic",
         WS_POPUP | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, widthPx, heightPx,
+        startX, startY, widthPx, heightPx,
         nullptr, nullptr, hInstance, this);
+        
+    if (!hwnd) return HRESULT_FROM_WIN32(GetLastError());
+    m_hwnd = hwnd;
+
+    // Apply baseline HWND_BOTTOM enforcement
+    SetWindowPos(m_hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    //--------------------------------------------------------------------
+
     //new code for the createwindowex function to get the window position from the settings repository--------------------------------------
     // Load saved coordinates from the SQLite settings repository
     // int startX = m_settingsRepository.GetInt(L"WindowX", CW_USEDEFAULT);
@@ -369,6 +450,9 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
+    //----------------------- foe call the PinToDesktopWorkerW func-------------------
+    // PinToDesktopWorkerW();
+    //---------------------------------
     return S_OK;
 }
 

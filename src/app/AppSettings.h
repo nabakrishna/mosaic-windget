@@ -33,6 +33,11 @@ struct AppSettings {
     bool alwaysOnTop = false;
     bool startWithWindows = false;
 
+    // --- Quick Notes ---------------------------------------------
+    // Seconds of inactivity before notes re-lock; 0 means "Never".
+    int noteAutoLockSeconds = 300;
+    bool lockNotesOnFocusLoss = true;
+
     // --- Performance -----------------------------------------------
     bool animationsEnabled = true;
 

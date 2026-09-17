@@ -79,6 +79,27 @@ HRESULT Database::RunMigrations() {
         "  subtitle TEXT NOT NULL DEFAULT '',"
         "  sort_order INTEGER NOT NULL DEFAULT 0,"
         "  created_at INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS widget_layout ("
+        "  widget_id INTEGER PRIMARY KEY,"
+        "  grid_col INTEGER NOT NULL,"
+        "  grid_row INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS settings ("
+        "  key TEXT PRIMARY KEY,"
+        "  value TEXT NOT NULL"
+        ");"
+        // Single-row table (id is always 1). `content` holds DPAPI
+        // ciphertext as a BLOB — plaintext note text is never written to
+        // this database. password_salt/password_hash are NULL until the
+        // user sets a password; the hash is PBKDF2-SHA256, never the
+        // password itself. See security/NoteCrypto.h.
+        "CREATE TABLE IF NOT EXISTS secure_notes ("
+        "  id INTEGER PRIMARY KEY,"
+        "  content BLOB,"
+        "  password_salt BLOB,"
+        "  password_hash BLOB,"
+        "  updated_at INTEGER NOT NULL DEFAULT 0"
         ");";
 
     char* errMsg = nullptr;

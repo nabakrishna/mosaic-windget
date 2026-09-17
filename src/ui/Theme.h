@@ -58,9 +58,9 @@ struct ThemeTypography {
 };
 
 // Bundles the three theme aspects and knows how to produce the built-in
-// presets. Settings (Phase 7) will extend this with CreateLight() and a
-// path that rebuilds a ThemeManager instance from persisted user choices;
-// today it only has the one preset the reference design uses.
+// presets. As of Phase 7, Settings drives this at runtime via the mutators
+// below — see app::ApplyThemeSettings, which maps AppSettings' appearance
+// values onto a live ThemeManager instance.
 class ThemeManager {
 public:
     static ThemeManager CreateDark();
@@ -69,9 +69,9 @@ public:
     const ThemeMetrics&    Metrics()    const { return m_metrics; }
     const ThemeTypography& Typography() const { return m_typography; }
 
-    // Mutators exist now (rather than being added later) because Phase 7
-    // needs to tweak individual values — e.g. the transparency slider only
-    // touches cardFill.a — without replacing the whole theme object.
+    // Individual-value mutators (rather than whole-object replacement) are
+    // what let Settings tweak one thing at a time — e.g. the transparency
+    // slider only touches cardFill.a, leaving every other color alone.
     ThemeColors&     MutableColors()     { return m_colors; }
     ThemeMetrics&    MutableMetrics()    { return m_metrics; }
     ThemeTypography& MutableTypography() { return m_typography; }

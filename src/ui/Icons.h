@@ -19,6 +19,8 @@ enum class IconKind {
     Close,         // per-row delete "x", shown on hover
     Plus,          // add-task / add-item buttons
     ChevronRight,  // settings category rows (Phase 7)
+    ChevronUp,     // move-up reorder button, shown on row hover
+    ChevronDown,   // move-down reorder button, shown on row hover
 };
 
 // Draws `kind` inside `bounds` (a square-ish region is assumed; icons scale

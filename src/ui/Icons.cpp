@@ -216,6 +216,32 @@ void DrawChevronRight(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush, D2D1
     ctx->DrawLine(p2, p3, brush, strokeWidth);
 }
 
+void DrawChevronUp(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds, D2D1_COLOR_F color) {
+    Box b = FitSquare(bounds);
+    float s = b.half;
+    D2D1_POINT_2F p1 = { b.cx - s * 0.55f, b.cy + s * 0.25f };
+    D2D1_POINT_2F p2 = { b.cx, b.cy - s * 0.35f };
+    D2D1_POINT_2F p3 = { b.cx + s * 0.55f, b.cy + s * 0.25f };
+
+    brush->SetColor(color);
+    float strokeWidth = s * 0.22f;
+    ctx->DrawLine(p1, p2, brush, strokeWidth);
+    ctx->DrawLine(p2, p3, brush, strokeWidth);
+}
+
+void DrawChevronDown(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds, D2D1_COLOR_F color) {
+    Box b = FitSquare(bounds);
+    float s = b.half;
+    D2D1_POINT_2F p1 = { b.cx - s * 0.55f, b.cy - s * 0.25f };
+    D2D1_POINT_2F p2 = { b.cx, b.cy + s * 0.35f };
+    D2D1_POINT_2F p3 = { b.cx + s * 0.55f, b.cy - s * 0.25f };
+
+    brush->SetColor(color);
+    float strokeWidth = s * 0.22f;
+    ctx->DrawLine(p1, p2, brush, strokeWidth);
+    ctx->DrawLine(p2, p3, brush, strokeWidth);
+}
+
 } // namespace
 
 void Draw(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush,
@@ -230,6 +256,8 @@ void Draw(ID2D1DeviceContext* ctx, ID2D1SolidColorBrush* brush,
     case IconKind::Close:        DrawClose(ctx, brush, bounds, color); break;
     case IconKind::Plus:         DrawPlus(ctx, brush, bounds, color); break;
     case IconKind::ChevronRight: DrawChevronRight(ctx, brush, bounds, color); break;
+    case IconKind::ChevronUp:    DrawChevronUp(ctx, brush, bounds, color); break;
+    case IconKind::ChevronDown:  DrawChevronDown(ctx, brush, bounds, color); break;
     case IconKind::None: default: break;
     }
 }

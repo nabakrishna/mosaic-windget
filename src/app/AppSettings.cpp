@@ -21,6 +21,8 @@ void AppSettings::LoadFrom(data::SettingsRepository& repo) {
     photoRotationMinutes = repo.GetInt(L"photo.rotationMinutes", photoRotationMinutes);
     alwaysOnTop = repo.GetBool(L"desktop.alwaysOnTop", alwaysOnTop);
     startWithWindows = repo.GetBool(L"desktop.startWithWindows", startWithWindows);
+    noteAutoLockSeconds = repo.GetInt(L"notes.autoLockSeconds", noteAutoLockSeconds);
+    lockNotesOnFocusLoss = repo.GetBool(L"notes.lockOnFocusLoss", lockNotesOnFocusLoss);
     animationsEnabled = repo.GetBool(L"performance.animationsEnabled", animationsEnabled);
 }
 
@@ -42,6 +44,8 @@ void AppSettings::SaveTo(data::SettingsRepository& repo) const {
     repo.SetInt(L"photo.rotationMinutes", photoRotationMinutes);
     repo.SetBool(L"desktop.alwaysOnTop", alwaysOnTop);
     repo.SetBool(L"desktop.startWithWindows", startWithWindows);
+    repo.SetInt(L"notes.autoLockSeconds", noteAutoLockSeconds);
+    repo.SetBool(L"notes.lockOnFocusLoss", lockNotesOnFocusLoss);
     repo.SetBool(L"performance.animationsEnabled", animationsEnabled);
 }
 
