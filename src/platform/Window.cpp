@@ -1,11 +1,15 @@
 #include "platform/Window.h"
 #include "notifications/ToastNotifier.h"
 #include "widgets/ActivityDateTime.h"
+#include "security/WindowsHello.h"
 #include <shlobj.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <windowsx.h>
 #include <ctime>
+#include <string>
 #include <sstream>
 
 #pragma comment(lib, "dwmapi.lib")
@@ -76,7 +80,7 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         // from spec section 36 applied literally: we redraw because
         // something *could* have changed, not on a tight render loop. It
         // also doubles as the photo rotation clock (see
-        // kPhotoRotationMinutes) rather than running a third OS timer for
+        // m_settings.photoRotationMinutes) rather than running a third OS timer for
         // something that's naturally expressible in whole minutes.
         // id 2: the short-lived crossfade animation timer — see
         // StartTransitionTimer's comment in Window.h.
@@ -84,7 +88,11 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             UpdateHeaderData();
             CheckActivityReminders();
 
-            if (++m_minutesSinceLastPhoto >= kPhotoRotationMinutes) {
+            if (m_quickNotesWidget && m_quickNotesWidget->TickAutoLock()) {
+                InvalidateRect(m_hwnd, nullptr, FALSE);
+            }
+
+            if (!m_photosPaused && ++m_minutesSinceLastPhoto >= m_settings.photoRotationMinutes) {
                 m_minutesSinceLastPhoto = 0;
                 if (m_photoWidget && m_graphics) {
                     m_photoWidget->RequestNextPhoto(m_graphics->DeviceContext());
@@ -93,9 +101,40 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(m_hwnd, nullptr, FALSE);
         } else if (wParam == 2) {
             InvalidateRect(m_hwnd, nullptr, FALSE);
-            if (!m_photoWidget || !m_photoWidget->IsTransitioning()) {
+            bool photoDone = !m_photoWidget || !m_photoWidget->IsTransitioning();
+            bool layoutDone = !m_dashboardView || !m_dashboardView->IsAnimating();
+            if (photoDone && layoutDone) {
                 StopTransitionTimer();
             }
+        }
+        return 0;
+
+    case security::WM_MOSAIC_HELLO_RESULT:
+        // The Windows Hello prompt finished on a background thread; this
+        // is the UI thread picking up the result (see WindowsHello.h).
+        security::WindowsHello::PumpResult();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_MOSAIC_TRAY:
+        // Left-click toggles visibility, right-click opens the menu —
+        // the conventions every Windows tray app follows.
+        if (LOWORD(lParam) == WM_LBUTTONUP) {
+            if (m_dashboardVisible) HideDashboard(); else ShowDashboard();
+        } else if (LOWORD(lParam) == WM_RBUTTONUP) {
+            m_trayIcon.ShowContextMenu(m_hwnd, m_dashboardVisible, m_photosPaused);
+        }
+        return 0;
+
+    case WM_COMMAND:
+        OnTrayCommand(LOWORD(wParam));
+        return 0;
+
+    case WM_KILLFOCUS:
+        // Settings > Quick Notes > "Lock when window loses focus".
+        if (m_settings.lockNotesOnFocusLoss && m_quickNotesWidget && m_quickNotesWidget->IsUnlocked()) {
+            m_quickNotesWidget->Lock();
+            InvalidateRect(m_hwnd, nullptr, FALSE);
         }
         return 0;
 
@@ -115,6 +154,10 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_LBUTTONDOWN:
         OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        return 0;
+
+    case WM_LBUTTONUP:
+        OnLButtonUp(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
 
     case WM_LBUTTONDBLCLK:
@@ -138,6 +181,19 @@ LRESULT Window::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         PostQuitMessage(0);
         return 0;
 
+    //new code for the WM_DESTROY message to save the window position in the settings repository--------------------------------------
+    // case WM_DESTROY: {
+    //     // Save the exact window position before shutting down
+    //     RECT rect;
+    //     if (GetWindowRect(m_hwnd, &rect)) {
+    //         m_settingsRepository.SetInt(L"WindowX", rect.left);
+    //         m_settingsRepository.SetInt(L"WindowY", rect.top);
+    //     }
+    //     PostQuitMessage(0);
+    //     return 0;
+    // }
+    //-----------------------------------------------------------------------------------------------------------------------------------
+
     default:
         return DefWindowProc(m_hwnd, msg, wParam, lParam);
     }
@@ -149,7 +205,11 @@ void Window::EnableAcrylicBackdrop() {
     // it, rather than us sampling and blurring the desktop ourselves (which
     // would cost real CPU/GPU every frame and violate the low-resource
     // requirement). Requires Windows 11 22H2+; harmless no-op otherwise.
-    DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_TRANSIENTWINDOW; // acrylic
+    //
+    // Settings > Appearance > Background Blur toggles this: DWMSBT_NONE
+    // turns the OS backdrop off entirely, leaving the dashboard's own
+    // translucent card fills over a plain transparent window.
+    DWM_SYSTEMBACKDROP_TYPE backdrop = m_settings.blurEnabled ? DWMSBT_TRANSIENTWINDOW : DWMSBT_NONE;
     DwmSetWindowAttribute(m_hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
 
     BOOL darkMode = TRUE;
@@ -190,11 +250,20 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
         WS_POPUP | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, widthPx, heightPx,
         nullptr, nullptr, hInstance, this);
+    //new code for the createwindowex function to get the window position from the settings repository--------------------------------------
+    // Load saved coordinates from the SQLite settings repository
+    // int startX = m_settingsRepository.GetInt(L"WindowX", CW_USEDEFAULT);
+    // int startY = m_settingsRepository.GetInt(L"WindowY", CW_USEDEFAULT);
 
+    // HWND hwnd = CreateWindowEx(
+    //     WS_EX_NOREDIRECTIONBITMAP,
+    //     kWindowClassName, L"Mosaic",
+    //     WS_POPUP | WS_VISIBLE,
+    //     startX, startY, widthPx, heightPx,
+    //     nullptr, nullptr, hInstance, this);
+        //-----------------------------------------------------------------------------------------------------------------------------------
     if (!hwnd) return HRESULT_FROM_WIN32(GetLastError());
     m_hwnd = hwnd;
-
-    EnableAcrylicBackdrop();
 
     // --- Data layer: open the database before anything tries to use it ---
     // A failed Open() (permissions, disk full, corrupt file) must not crash
@@ -210,26 +279,80 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
         m_pinnedRepository.SeedDefaultsIfEmpty();
     }
 
-    // --- Photo source: default to the user's Pictures folder ------------
-    // Folder picking is a Settings feature (Phase 7); today this is the
-    // one sensible default that needs no configuration at all. A missing
-    // or empty Pictures folder isn't an error — PhotoWidget shows "No
+    // Settings must load before anything that reads them — the theme, the
+    // backdrop, z-order, and which widgets the layout includes all depend
+    // on these values. Falls back to AppSettings' own defaults for a fresh
+    // install where nothing has been saved yet.
+    m_settings.LoadFrom(m_settingsRepository);
+    app::ApplyThemeSettings(m_settings, m_theme);
+    EnableAcrylicBackdrop();
+
+    // --- Photo source ---------------------------------------------------
+    // Uses whatever folder Settings > Photo & Media last picked, falling
+    // back to the user's Pictures folder if none has been chosen. A
+    // missing or empty folder isn't an error — PhotoWidget shows "No
     // photos found" rather than anything crashing (spec section 60).
-    PWSTR picturesPath = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &picturesPath))) {
-        m_photoProvider.SetFolder(picturesPath);
-        CoTaskMemFree(picturesPath);
+    std::wstring photoFolder = m_settingsRepository.GetString(L"photo.folder", L"");
+    if (photoFolder.empty()) {
+        PWSTR picturesPath = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &picturesPath))) {
+            photoFolder = picturesPath;
+            CoTaskMemFree(picturesPath);
+        }
+    }
+    if (!photoFolder.empty()) {
+        m_photoProvider.SetFolder(photoFolder);
     }
     m_imagePipeline.Start(m_hwnd);
 
-    m_widgetManager.Initialize();
-    m_photoWidget = static_cast<widgets::PhotoWidget*>(m_widgetManager.Get(widgets::WidgetId::Photo));
+    // Windows Hello runs asynchronously and posts its result back to this
+    // window, so the widget can't call it directly — Window supplies this
+    // adapter, which is also the single place that decides Hello is
+    // unavailable and lets the widget fall back to a password.
+    auto requestHello = [this](const std::wstring& message,
+                                std::function<void(security::HelloResult)> onComplete) {
+        security::WindowsHello::RequestVerification(m_hwnd, message, std::move(onComplete));
+    };
+
+    m_widgetManager = std::make_unique<widgets::WidgetManager>(
+        &m_todoRepository, &m_activityRepository, &m_pinnedRepository, &m_notesRepository,
+        &m_photoProvider, &m_imagePipeline, requestHello);
+    m_widgetManager->Initialize();
+    m_photoWidget = static_cast<widgets::PhotoWidget*>(m_widgetManager->Get(widgets::WidgetId::Photo));
+    m_quickNotesWidget = static_cast<widgets::QuickNotesWidget*>(m_widgetManager->Get(widgets::WidgetId::QuickNotes));
+    if (m_quickNotesWidget) {
+        m_quickNotesWidget->SetAutoLockSeconds(m_settings.noteAutoLockSeconds);
+    }
+
+    m_trayIcon.Create(m_hwnd, L"Mosaic");
 
     m_graphics = std::make_unique<ui::GraphicsDevice>();
     HRESULT hr = m_graphics->Initialize(m_hwnd, static_cast<UINT>(widthPx), static_cast<UINT>(heightPx));
     if (FAILED(hr)) return hr;
 
-    m_dashboardView = std::make_unique<ui::DashboardView>(m_graphics->DWriteFactory(), &m_theme, &m_widgetManager);
+    ui::SettingsCallbacks settingsCallbacks;
+    settingsCallbacks.onSettingsChanged = [this] {
+        // Persist immediately, then apply. There's no "Save" button by
+        // design — every other control in Mosaic (To Do, Activity, widget
+        // position) already commits on change, and Settings matching that
+        // is less surprising than introducing a second convention.
+        m_settings.SaveTo(m_settingsRepository);
+        app::ApplyThemeSettings(m_settings, m_theme);
+        ApplyNonThemeSettings();
+        if (m_quickNotesWidget) m_quickNotesWidget->SetAutoLockSeconds(m_settings.noteAutoLockSeconds);
+        if (m_dashboardView) m_dashboardView->RebuildLayout(); // widget enable/disable may have changed
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    };
+    settingsCallbacks.onResetLayout = [this] {
+        m_layoutRepository.ClearAll();
+        if (m_dashboardView) m_dashboardView->RebuildLayout();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    };
+    settingsCallbacks.onPickPhotoFolder = [this] { PickPhotoFolder(); };
+
+    m_dashboardView = std::make_unique<ui::DashboardView>(
+        m_graphics->DWriteFactory(), &m_theme, m_widgetManager.get(), &m_layoutRepository,
+        &m_settings, std::move(settingsCallbacks));
     hr = m_dashboardView->CreateDeviceResources(m_graphics->DeviceContext());
     if (FAILED(hr)) return hr;
     m_deviceResourcesValid = true;
@@ -237,6 +360,8 @@ HRESULT Window::Create(HINSTANCE hInstance, int nCmdShow) {
     if (m_photoWidget) {
         m_photoWidget->RequestNextPhoto(m_graphics->DeviceContext());
     }
+
+    ApplyNonThemeSettings();
 
     UpdateHeaderData();
     CheckActivityReminders();
@@ -282,13 +407,140 @@ void Window::CheckActivityReminders() {
     }
 }
 
+void Window::ApplyNonThemeSettings() {
+    // Always-on-top: a real z-order change, not a cosmetic flag.
+    SetWindowPos(m_hwnd, m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+    EnableAcrylicBackdrop(); // picks up m_settings.blurEnabled
+    ApplyStartWithWindows(m_settings.startWithWindows);
+}
+
+void Window::ApplyStartWithWindows(bool enabled) {
+    // The standard unprivileged run-at-login mechanism: a per-user value
+    // under HKCU\...\Run. No admin rights, no scheduled task, no service —
+    // and trivially inspectable/removable by the user, which matters for
+    // something that modifies startup behavior.
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) {
+        return; // registry unavailable — fail silently rather than crash (spec section 60)
+    }
+
+    if (enabled) {
+        wchar_t exePath[MAX_PATH]{};
+        DWORD len = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        if (len > 0 && len < MAX_PATH) {
+            // Quoted so a path containing spaces (very common under
+            // C:\Users\First Last\...) parses as one argument.
+            std::wstring quoted = L"\"" + std::wstring(exePath) + L"\"";
+            RegSetValueExW(key, L"Mosaic", 0, REG_SZ,
+                           reinterpret_cast<const BYTE*>(quoted.c_str()),
+                           static_cast<DWORD>((quoted.size() + 1) * sizeof(wchar_t)));
+        }
+    } else {
+        RegDeleteValueW(key, L"Mosaic"); // absent value is fine; error ignored deliberately
+    }
+    RegCloseKey(key);
+}
+
+void Window::PickPhotoFolder() {
+    // IFileDialog with FOS_PICKFOLDERS is the modern folder picker —
+    // SHBrowseForFolder still works but looks like Windows XP, which would
+    // undercut the whole point of the design.
+    Microsoft::WRL::ComPtr<IFileDialog> dialog;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr)) return;
+
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options))) {
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+    }
+
+    if (FAILED(dialog->Show(m_hwnd))) return; // user cancelled — not an error
+
+    Microsoft::WRL::ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item))) return;
+
+    PWSTR path = nullptr;
+    if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+        m_settingsRepository.SetString(L"photo.folder", path);
+        m_photoProvider.SetFolder(path);
+        CoTaskMemFree(path);
+
+        // Show something from the new folder straight away rather than
+        // waiting out the rest of the current rotation interval.
+        m_minutesSinceLastPhoto = 0;
+        if (m_photoWidget && m_graphics) {
+            m_photoWidget->RequestNextPhoto(m_graphics->DeviceContext());
+        }
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
+void Window::ShowDashboard() {
+    ShowWindow(m_hwnd, SW_SHOW);
+    SetForegroundWindow(m_hwnd);
+    m_dashboardVisible = true;
+}
+
+void Window::HideDashboard() {
+    // Lock notes before hiding — leaving decrypted content in memory
+    // behind a hidden window would quietly defeat the lock.
+    if (m_quickNotesWidget && m_quickNotesWidget->IsUnlocked()) {
+        m_quickNotesWidget->Lock();
+    }
+    ShowWindow(m_hwnd, SW_HIDE);
+    m_dashboardVisible = false;
+}
+
+void Window::OnTrayCommand(UINT commandId) {
+    switch (commandId) {
+    case TrayCmd_Show:
+        ShowDashboard();
+        break;
+    case TrayCmd_Hide:
+        HideDashboard();
+        break;
+    case TrayCmd_Settings:
+        ShowDashboard();
+        if (m_dashboardView) {
+            m_dashboardView->OpenSettings();
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        break;
+    case TrayCmd_PausePhotos:
+        m_photosPaused = !m_photosPaused;
+        break;
+    case TrayCmd_Quit:
+        // Lock (and therefore save) notes before tearing down, so a quit
+        // from the tray doesn't silently lose an unsaved edit.
+        if (m_quickNotesWidget) m_quickNotesWidget->Lock();
+        m_trayIcon.Destroy();
+        DestroyWindow(m_hwnd);
+        break;
+    default:
+        break;
+    }
+}
+
 void Window::StartTransitionTimer() {
     if (m_transitionTimerRunning) return;
-    if (!m_photoWidget || !m_photoWidget->IsTransitioning()) return;
-    // ~30fps is plenty smooth for a simple opacity crossfade and cheap
-    // enough to run for the fade's ~220ms without it reading as "the app
-    // just started animating things continuously" — it stops itself (see
-    // the WM_TIMER id==2 handler) the moment the fade reports done.
+    // Settings > Performance > Animations off means the timer never runs:
+    // photo changes cut straight to the new image and dropped widgets
+    // appear in their final slot immediately. Both code paths already
+    // handle "no animation frames arrive" correctly — they just render
+    // their end state — so this needs no special-casing elsewhere.
+    if (!m_settings.animationsEnabled) return;
+    bool photoAnimating = m_photoWidget && m_photoWidget->IsTransitioning();
+    bool layoutAnimating = m_dashboardView && m_dashboardView->IsAnimating();
+    if (!photoAnimating && !layoutAnimating) return;
+    // ~30fps is plenty smooth for a simple opacity crossfade or rect
+    // interpolation, and cheap enough to run for a couple hundred
+    // milliseconds without it reading as "the app just started animating
+    // things continuously" — it stops itself (see the WM_TIMER id==2
+    // handler) the moment both report done.
     SetTimer(m_hwnd, /*id*/ 2, 33, nullptr);
     m_transitionTimerRunning = true;
 }
@@ -329,7 +581,7 @@ void Window::OnPaint() {
         // but calling it on all of them costs nothing and means a future
         // widget with its own GPU resource doesn't need this call site
         // updated to remember it exists.
-        for (const auto& [id, widget] : m_widgetManager.Widgets()) {
+        for (const auto& [id, widget] : m_widgetManager->Widgets()) {
             widget->OnDeviceLost();
         }
 
@@ -405,14 +657,51 @@ void Window::OnLButtonDown(int pixelX, int pixelY) {
     // arrive after clicking into the dashboard.
     SetFocus(m_hwnd);
 
+    // Captures the mouse for the duration of a potential drag: without
+    // this, moving the cursor fast enough during a drag can leave the
+    // window's client area, which would stop delivering WM_MOUSEMOVE (and
+    // worse, the eventual WM_LBUTTONUP) entirely. Released unconditionally
+    // in OnLButtonUp, whether or not a drag actually happened.
+    SetCapture(m_hwnd);
+
     D2D1_POINT_2F dip = PixelToDip(pixelX, pixelY);
     bool changed = m_dashboardView->OnLButtonDown(dip);
 
-    if (m_dashboardView->IsPointerOverSettingsButton()) {
-        // Phase 7 hooks the actual Settings panel here. For now this is a
-        // deliberate no-op rather than a fabricated dialog — the button is
-        // real and clickable, but there is nothing behind it yet.
-    }
+    if (changed) InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+//new code for the OnLButtonDown function to allow dragging the window when clicking on the empty background of the dashboard--------------------------------------
+// void Window::OnLButtonDown(int pixelX, int pixelY) {
+//     if (!m_dashboardView) return;
+//     SetFocus(m_hwnd);
+
+//     D2D1_POINT_2F dip = PixelToDip(pixelX, pixelY);
+//     bool changed = m_dashboardView->OnLButtonDown(dip);
+
+//     // If DashboardView didn't flag a change, assume we clicked the empty 
+//     // background and drag the whole OS window.
+//     if (!changed) {
+//         ReleaseCapture();
+//         SendMessage(m_hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+//     } else {
+//         SetCapture(m_hwnd);
+//         InvalidateRect(m_hwnd, nullptr, FALSE);
+//     }
+// }
+//-----------------------------------------------------------------------------------------------------------------------------------
+
+void Window::OnLButtonUp(int pixelX, int pixelY) {
+    ReleaseCapture();
+    if (!m_dashboardView) return;
+
+    D2D1_POINT_2F dip = PixelToDip(pixelX, pixelY);
+    bool changed = m_dashboardView->OnLButtonUp(dip);
+
+    // A drop may have just started a settle animation (or a drag that
+    // moved but didn't cross the threshold may have just resolved into an
+    // ordinary click) — either way, make sure the shared animation timer
+    // is running if DashboardView now needs it.
+    StartTransitionTimer();
 
     if (changed) InvalidateRect(m_hwnd, nullptr, FALSE);
 }

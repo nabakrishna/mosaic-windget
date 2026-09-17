@@ -9,6 +9,12 @@
 #include "data/TodoRepository.h"
 #include "data/ActivityRepository.h"
 #include "data/PinnedRepository.h"
+#include "data/LayoutRepository.h"
+#include "data/SettingsRepository.h"
+#include "data/NotesRepository.h"
+#include "platform/TrayIcon.h"
+#include "widgets/QuickNotesWidget.h"
+#include "app/AppSettings.h"
 #include "media/LocalFolderPhotoProvider.h"
 #include "media/ImagePipeline.h"
 #include "widgets/WidgetManager.h"
@@ -38,13 +44,15 @@ namespace mosaic::platform {
 // see CheckActivityReminders(). A minute of latency on a reminder is an
 // acceptable trade for not running a second timer or any sub-minute polling.
 //
-// As of Phase 5, there's a second, deliberately short-lived timer for the
-// photo crossfade: running a ~30fps timer permanently would violate the
-// near-0%-idle-CPU requirement, but the fade only needs to animate for
-// ~220ms every few minutes. StartTransitionTimer/StopTransitionTimer turn
-// it on only while PhotoWidget reports it's actually mid-fade, and it's
-// stopped again the moment that's no longer true — everything else stays
-// on the once-a-minute cadence.
+// As of Phase 5/6, there's a second, deliberately short-lived timer shared
+// by two unrelated animations: the photo crossfade (Phase 5) and the
+// layout drag-drop settle animation (Phase 6). Running a ~30fps timer
+// permanently would violate the near-0%-idle-CPU requirement, but both
+// animations only need to run for a couple hundred milliseconds at a
+// time. StartTransitionTimer/StopTransitionTimer turn it on the moment
+// either PhotoWidget or DashboardView reports it's actually animating,
+// and off again the instant *both* report they're done — see the
+// WM_TIMER id==2 handler for the exact condition.
 class Window {
 public:
     Window() = default;
@@ -71,6 +79,7 @@ private:
     void OnMouseMove(int pixelX, int pixelY);
     void OnMouseLeave();
     void OnLButtonDown(int pixelX, int pixelY);
+    void OnLButtonUp(int pixelX, int pixelY);
     void OnLButtonDblClk(int pixelX, int pixelY);
     void OnChar(wchar_t ch);
     void OnKeyDown(UINT virtualKey);
@@ -81,6 +90,19 @@ private:
     void EnableAcrylicBackdrop();
 
     void UpdateHeaderData(); // refreshes greeting/date only — real widget data lives in the widgets themselves
+
+    // Applies every AppSettings value that isn't pure theme: always-on-top
+    // z-order, the DWM backdrop on/off, run-at-startup registry entry, and
+    // the photo rotation interval. Theme values go through
+    // app::ApplyThemeSettings instead. Called at startup and after every
+    // Settings change.
+    void ApplyNonThemeSettings();
+    void ApplyStartWithWindows(bool enabled);
+    void PickPhotoFolder(); // opens the Win32 folder browser, rescans the provider
+
+    void OnTrayCommand(UINT commandId);
+    void ShowDashboard();
+    void HideDashboard();
     void CheckActivityReminders(); // fires toasts for any activity whose reminder time has passed
 
     void StartTransitionTimer();
@@ -93,7 +115,9 @@ private:
     bool m_trackingMouseLeave = false;
     bool m_transitionTimerRunning = false;
     int m_minutesSinceLastPhoto = 0;
-    static constexpr int kPhotoRotationMinutes = 5; // spec section 8's default; Settings (Phase 7) makes this configurable
+    // Rotation interval now comes from m_settings.photoRotationMinutes
+    // (spec section 8's 5-minute default lives in AppSettings), changeable
+    // live from Settings > Photo & Media.
 
     ui::ThemeManager m_theme = ui::ThemeManager::CreateDark();
 
@@ -104,12 +128,18 @@ private:
     data::TodoRepository m_todoRepository{ &m_database };
     data::ActivityRepository m_activityRepository{ &m_database };
     data::PinnedRepository m_pinnedRepository{ &m_database };
+    data::LayoutRepository m_layoutRepository{ &m_database };
+    data::SettingsRepository m_settingsRepository{ &m_database };
+    data::NotesRepository m_notesRepository{ &m_database };
+    app::AppSettings m_settings;
     media::LocalFolderPhotoProvider m_photoProvider;
     media::ImagePipeline m_imagePipeline;
-    widgets::WidgetManager m_widgetManager{
-        &m_todoRepository, &m_activityRepository, &m_pinnedRepository,
-        &m_photoProvider, &m_imagePipeline
-    };
+    // Constructed in Create() rather than here, because QuickNotesWidget's
+    // Windows Hello callback needs m_hwnd, which doesn't exist until the
+    // window is created. unique_ptr keeps the "declared before the things
+    // that outlive it" ordering intact — it's still destroyed before every
+    // repository it points into.
+    std::unique_ptr<widgets::WidgetManager> m_widgetManager;
 
     // Non-owning — WidgetManager owns the actual PhotoWidget instance.
     // Photo is the one widget Window talks to directly (to drive rotation
@@ -118,6 +148,14 @@ private:
     // documented special case rather than a generalized per-widget
     // animation/scheduling system this single use doesn't justify yet.
     widgets::PhotoWidget* m_photoWidget = nullptr;
+
+    // Also non-owning (WidgetManager owns it) — Window needs direct access
+    // to drive auto-lock from the minute timer and to lock on focus loss.
+    widgets::QuickNotesWidget* m_quickNotesWidget = nullptr;
+
+    TrayIcon m_trayIcon;
+    bool m_dashboardVisible = true;
+    bool m_photosPaused = false;
 
     std::unique_ptr<ui::GraphicsDevice> m_graphics;
     std::unique_ptr<ui::DashboardView>  m_dashboardView;
