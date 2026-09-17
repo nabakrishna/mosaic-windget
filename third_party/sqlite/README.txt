@@ -1,6 +1,6 @@
 This folder is where the SQLite amalgamation source lives.
 
-tries an automatic FetchContent download as a
+CMakeLists.txt tries an automatic FetchContent download as a
 convenience default, but the reliable path is manual:
 
 1. Go to https://www.sqlite.org/download.html
