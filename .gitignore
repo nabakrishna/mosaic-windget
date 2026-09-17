@@ -5,5 +5,5 @@ out/
 *.ilk
 .vs/
 CMakeUserPresets.json
-README.md
+READ.md
 imp.txt
