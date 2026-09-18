@@ -1,6 +1,11 @@
 #include "layout/LayoutEngine.h"
 #include <algorithm>
-
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
 namespace mosaic::layout {
 
 // --- OccupancyGrid --------------------------------------------------------
