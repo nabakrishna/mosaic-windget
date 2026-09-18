@@ -25,7 +25,9 @@ public:
 
     WidgetId Id() const override { return WidgetId::Photo; }
     WidgetMetadata Metadata() const override {
-        return WidgetMetadata{ WidgetId::Photo, L"Photo", { 2, 2 }, { 1, 1 }, { 3, 3 } };
+        // return WidgetMetadata{ WidgetId::Photo, L"Photo", { 2, 2 }, { 1, 1 }, { 3, 3 } };
+        // Change preferred to 3x3, and max to 6x6
+        return WidgetMetadata{ WidgetId::Photo, L"Photo", { 4, 5 }, { 2, 2 }, { 6, 6 } };
     }
 
     void Render(ID2D1DeviceContext* ctx, D2D1_RECT_F bounds, const WidgetRenderResources& res) override;
