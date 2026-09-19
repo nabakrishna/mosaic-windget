@@ -18,3 +18,8 @@ stack, driven directly.
 4. `Ctrl+Shift+P` → **CMake: Configure**.
 5. `Ctrl+Shift+P` → **CMake: Build**
 6. The executable lands at `build/bin/Mosaic.exe`
+
+
+## digram
+![Mosaic Architecture](results/arch-mosaic.svg)
+
