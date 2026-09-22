@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)#version 3.21 is not supported by the default Visual Studio 2022 installation, so we use 3.20 to avoid requiring users to install a newer CMake version than they already have.
 project(Mosaic LANGUAGES C CXX)
 
 if(NOT WIN32)
