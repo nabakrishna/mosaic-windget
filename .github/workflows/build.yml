@@ -1,47 +1,47 @@
 #writing a GitHub Actions workflow to build a C++ project using CMake and Ninja on Windows
 
 
-# name: Build
+name: Build
 
-# on:
-#   push:
-#     branches: [ main ]
-#   pull_request:
+on:
+  push:
+    branches: [ main ]
+  pull_request:
 
-# jobs:
-#   build:
-#     runs-on: windows-2022
+jobs:
+  build:
+    runs-on: windows-2022
 
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-#       - name: Install Visual Studio Build Tools
-#         shell: powershell
-#         run: |
-#           Invoke-WebRequest `
-#             -Uri https://aka.ms/vs/17/release/vs_buildtools.exe `
-#             -OutFile C:\temp\vs_buildtools.exe
-#           Start-Process `
-#             -FilePath C:\temp\vs_buildtools.exe `
-#             -ArgumentList '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --installPath "C:/Program Files/Microsoft Visual Studio/2022/BuildTools"' `
-#             -NoNewWindow -Wait
-#           Remove-Item C:\temp\vs_buildtools.exe -Force
+      - name: Install Visual Studio Build Tools
+        shell: powershell
+        run: |
+          Invoke-WebRequest `
+            -Uri https://aka.ms/vs/17/release/vs_buildtools.exe `
+            -OutFile C:\temp\vs_buildtools.exe
+          Start-Process `
+            -FilePath C:\temp\vs_buildtools.exe `
+            -ArgumentList '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --installPath "C:/Program Files/Microsoft Visual Studio/2022/BuildTools"' `
+            -NoNewWindow -Wait
+          Remove-Item C:\temp\vs_buildtools.exe -Force
 
-#       - name: Install CMake and Ninja
-#         shell: powershell
-#         run: |
-#           winget install --id Kitware.CMake --accept-source-agreements --accept-package-agreements -e
-#           winget install --id Ninja-build.Ninja --accept-source-agreements --accept-package-agreements -e
+      - name: Install CMake and Ninja
+        shell: powershell
+        run: |
+          winget install --id Kitware.CMake --accept-source-agreements --accept-package-agreements -e
+          winget install --id Ninja-build.Ninja --accept-source-agreements --accept-package-agreements -e
 
-#       - name: Configure
-#         shell: powershell
-#         run: |
-#           $env:Path += ";C:\Program Files\CMake\bin"
-#           cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+      - name: Configure
+        shell: powershell
+        run: |
+          $env:Path += ";C:\Program Files\CMake\bin"
+          cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
 
-#       - name: Build
-#         shell: powershell
-#         run: |
-#           $env:Path += ";C:\Program Files\CMake\bin"
-#           cmake --build build --config Release
+      - name: Build
+        shell: powershell
+        run: |
+          $env:Path += ";C:\Program Files\CMake\bin"
+          cmake --build build --config Release
